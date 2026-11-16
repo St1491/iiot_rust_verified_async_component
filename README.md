@@ -59,7 +59,7 @@ Represent an actor that is initialized and is waiting for the instruction to act
 Represent an actor while it's working. Its methods are:
 - `act`, returns Err since the actor is already busy;
 - `stop`, returns Ok and the state [`Initialized`](#initialized) state. The actor stops and waits to, eventually, start again.
-- `check_ingrety`, returns the same `Acting` state for the same reasons of the previous state;
+- `check_integrity`, returns the same `Acting` state for the same reasons of the previous state;
 - `to_string`, returns a `String` containing `"Acting"`;
 
 ### Broken
@@ -68,6 +68,17 @@ Represent an actor that can't garantee safety or encountered an error while bein
 - `stop`, returns Err since it is not acting and can't possibly be;
 - `check_integrity` returns the same `Broken` state (as my assumption that a broken actor can't be repaired);
 - `to_string`, returns a `String` containing `"Broken"`;
+
+### Typestate invariants
+The following invariants are enforced at compile time by the typestate pattern. The [`State`](#state) trait is crate-private, so external code cannot introduce a new state or bypass the transition rules.
+
+1. Integrity before action. `Idle::act()` returns `Err`. The only valid path to [`Acting`](#acting) is [`Idle`](#idle) → `check_integrity` → [`Initialized`](#initialized) → `act` → [`Acting`](#acting). An uninitialised actor cannot start work.
+2. [`Broken`](#broken) is terminal (by assumption). No method on [`Broken`](#broken) returns any other state. Once broken, an actor is permanently disabled; there is no repair transition.
+3. No double-start. `Acting::act()` returns `Err`. An actor already working cannot be re-issued the act command.
+4. No spurious stop. `Idle::stop()` and `Initialized::stop()` return `Err`. Only an [`Acting`](#acting) actor can be stopped.
+5. Integrity is stable (by assumption). `Initialized::check_integrity()` and `Acting::check_integrity()` both return the same state, reflecting the design assumption that integrity, once verified, cannot be compromised.
+
+I enforced these invariants through the return type `(Result<State, String>)` rather than via sealed traits or phantom type parameters. The `Result` type already makes invalid transitions unrepresentable: a call-site cannot pattern-match on an [`Acting`](#acting) state returned from `Idle::act()` because the `Ok` variant is not produced. A sealed trait on [`State`](#state) would additionally prevent external crates from implementing a new state, but since the trait is already crate-private, this is redundant. I chose the simpler mechanism because the visibility boundary already closes the hole a sealed trait would guard against.
 
 ## Actor
 The struct that represent the actor itself, it consists of an id and the [`State`](#state) the actor is in.\
@@ -133,6 +144,24 @@ These three tests are all passed:\
 # Conclusions
 The correctness of the FSM that constitute the Actor is garanteed by the rust-native types alone since neither verification tools can verify this implementation since they don't support async function yet and they can't control directly the state field of the [`Actor`](#actor) for its `<dyn State>` implementation.
 These tools however certifies that what can be directly controlled by the user works as intended and should not panic in an unforseen way by checking various inputs and values and the way the method respond. It is possible that one of these function actually panics but it is always in a state where no harm could have been caused and the error is clearly indicated.
+
+The [`Actor::run`](#run-1) method is async because it models a realistic industrial workload: the actor sleeps for a configured duration while performing work, and other actors must be able to proceed concurrently. `tokio::time::sleep` is used to simulate the work window.
+
+Both Kani and Creusot currently lack support for verifying async functions with await points, and neither can inspect `<dyn State>` dispatch. To work within this limitation, I structured the code so that state transitions, resource reservation and error handling live in synchronous methods (`check_integrity`, `act`, `stop`, [`reserve_resource`](#reserve_resource), [`free_resource`](#free_resource)) that are verifiable in principle, while the waiting (the actual work duration) is isolated in the async run method. The safety-critical logic is therefore separated from the concurrency concern, which is the part the tools cannot yet reach.
+
+The multi-actor simulation ([`run`](#run)) exercises this boundary: N actors asynchronously compete for M shared resources through a Mutex, and the resource protocol (reserve → act → free) is the interaction pattern whose correctness depends on the synchronous invariants above plus the runtime Mutex discipline. A natural hyperproperty this enforces across the full execution trace is mutual exclusion: at no point in the trace is a resource held by more than one actor. This is currently guaranteed by the Mutex and the reserve/free pairing, not by a formal verifier, which is the primary direction for future work.
+
+### Why Kani for `parse`
+I chose Kani to verify [`parse`](#parse) because it is a pure, input-driven, synchronous function with no loops over unbounded data. Kani's bounded model checker explores arbitrary symbolic inputs to the string arguments and confirms that every input either parses into a valid [`Config`](#config) or panics deterministically. This is is exactly the kind of input-exhaustiveness that bounded search over concrete values covers.
+
+### Why Creusot for `new` and `parse`
+I chose Creusot to verify the same two functions because they are pure and synchronous, with a clear input→output relationship that maps directly onto a refinement-type contract. Where Kani confirms the property over a (bounded) set of generated inputs, Creusot proves the pre/post-conditions hold for all possible inputs unboundedly. Together the two give complementary assurance: Kani catches a concrete bad input, Creusot rules out an entire class of them by construction.
+
+### Why not the FSM
+I did not attempt to verify the State trait or the `Actor::run` method with either Kani or Creusot. Both tools currently cannot introspect `<dyn State>` trait-object dispatch, and neither supports verifying async functions containing await points. The state-transition safety is therefore delegated entirely to the Rust type system, which is the correct boundary: the invariants are structural and are enforced at compile time, not at runtime.
+
+### What neither tools catch
+The [`reserve_resource`](#reserve_resource) / [`free_resource`](#free_resource) / [`run`](#run) / [`Actor::run`](#run-1) methods are async and involve a Mutex shared across concurrent actors. Neither Kani nor Creusot can verify these paths. The correctness of the resource protocol (reserve → act → free) is therefore a convention enforced by the code structure and documented via the CAUTION note, not a guarantee enforced by a verifier. This is the primary gap in the current verification coverage.
 
 
 
