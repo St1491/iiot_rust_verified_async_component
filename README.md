@@ -1,6 +1,6 @@
 # Rust Verified Async Component
 A program that simulates the behavior of a possible actor implemented in Rust.\
-For the full verification strategy, tool-selection rationale, and comparative analysis, see the [Verification Report](REPORT.md).
+For the full verification strategy, tool-selection rationale, and comparative analysis, see the [Verification Report](REPORT.md).\
 The actor is implemented as a small finite state machine (FSM); its behavior depends heavily on the state in order to avoid dangerous actions.\
 It is also possible to simulate an example of how different amounts of actors will act on a determined amount of shared resources.\
 All the configuration parameters are set by the arguments of the program. In particular:

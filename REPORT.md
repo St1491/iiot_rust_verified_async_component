@@ -1,5 +1,6 @@
 # Verification Report
-This report documents the verification strategy behind the async fail-safe actor described in the [README](README.md). The component implements a four-state finite state machine ([`Idle`](README.md#idle) → [`Initialized`](README.md#initialized) → [`Acting`](README.md#acting) → [`Broken`](README.md#broken)) whose transitions are enforced at compile time by the Rust type system, and whose input-handling logic ([`Config::new`](README.md#config), [`Config::parse`](README.md#parse)) is verified with two complementary Rust-native tools: [Kani](README.md#kani) (bounded model checking) and [Creusot](README.md#creusot) (refinement-type proof).
+This report documents the verification strategy behind the async fail-safe actor described in the [README](README.md).\
+The component implements a four-state finite state machine ([`Idle`](README.md#idle) → [`Initialized`](README.md#initialized) → [`Acting`](README.md#acting) → [`Broken`](README.md#broken)) whose transitions are enforced at compile time by the Rust type system, and whose input-handling logic ([`Config::new`](README.md#config), [`Config::parse`](README.md#parse)) is verified with two complementary Rust-native tools: [Kani](README.md#kani) (bounded model checking) and [Creusot](README.md#creusot) (refinement-type proof).
 
 Each section states a design choice, the reasoning behind it, and (where applicable) a concrete example of a property that the chosen mechanism catches or misses.
 ## 1. Verification strategy
