@@ -11,24 +11,24 @@ use super::*;
 
 ///A State representing a new actor not yet initialized
 /// An idle actor cannot act nor stop, its integrity must be checked before any other transition
-#[derive(Clone,Debug)]
+#[derive(Debug)]
 pub struct Idle{}
 ///A State representing an actor whose integrity has already been checked and is waiting to act
 /// Rechecking its intergity does nothing
 /// Acting change the state to Acting
 /// Stopping cannot be performed since it's doing nothing yet
-#[derive(Clone,Debug)]
+#[derive(Debug)]
 pub struct Initialized{}
 ///State representing an actor while it is working
 /// Rechecking its intergity does nothing
 /// Stopping change the state to Initialized
 /// Acting cannot be performed since it's already acting
-#[derive(Clone,Debug)]
+#[derive(Debug)]
 pub struct Acting{}
 ///State representing an actor that encountered an error while being initialized
 /// It cannot act to garantee safety nor stop since it can never be acting
 /// Its integrity can be rechecked but nothing will change 
-#[derive(Clone,Debug)]
+#[derive(Debug)]
 pub struct Broken{}
 
 ///Simulates the actual internal check of the actor, this is currently a placeholder that always returns true
@@ -38,7 +38,7 @@ pub fn debug_check() -> bool{
 
 
 ///The struct that represent the actor itself, it contains an id to identify the actor and depends on the state the actor is currently in
-#[derive(Debug,Clone)]
+#[derive(Debug)]
 pub struct Actor<S>{
     id: String,
     _phantom : PhantomData<S>,
@@ -105,25 +105,24 @@ impl Actor<Broken>{
 }
 impl <S> Actor<S>{
     ///Lock one of the shared resources for the use of an actor
-    pub fn reserve_resource(&self, shared_resource:Arc<Mutex<u32>>) -> bool{
+    pub fn reserve_resource(&self, shared_resource:Arc<Mutex<ResourcePool>>) -> bool{
         let mut n = shared_resource.lock().unwrap();
-        if *n > 0 {
-            *n = n.saturating_sub(1);
+        if n.can_reserve() {
+            n.reserve();
             return true;
         }
         return false;
     }
     ///Unlock the resource after the actor finished its work
-    pub fn free_resource(&self, shared_resource:Arc<Mutex<u32>>, max:u32){
+    pub fn free_resource(&self, shared_resource:Arc<Mutex<ResourcePool>>){
         let mut n = shared_resource.lock().unwrap();
-        assert!(*n < max, "double-free");
-        *n += 1;
+        n.free();
     }
 
 }
 
 ///Simulate a possible execution for the actor (can only be used on Idle Actors)
-pub async fn run_one(id:String,shared_resource: Arc<Mutex<u32>>, config:Config) -> Result<(),Box<dyn Error>>{
+pub async fn run_one(id:String,shared_resource: Arc<Mutex<ResourcePool>>, config:Config) -> Result<(),Box<dyn Error>>{
     let actor= Actor::new(id);
     match actor.check_integrity(debug_check()){                                                             //Initiliaze the actor
         Ok(mut initialized) => {
@@ -132,7 +131,7 @@ pub async fn run_one(id:String,shared_resource: Arc<Mutex<u32>>, config:Config) 
                     let acting = initialized.act();                                          //Start the actor
                     trpl::sleep(Duration::from_secs(config.process_duration as u64)).await;                 //Simulate the work as a sleep
                     initialized = acting.stop();                                                            //Stop the actor
-                    initialized.free_resource(Arc::clone(&shared_resource),config.shared_resources);   //frees the resource
+                    initialized.free_resource(Arc::clone(&shared_resource));   //frees the resource
                     println!("'{}' ran for {}s",initialized.id,config.process_duration);
                     return Ok(())                                                                           //End the simulation without errors    
                 }

@@ -2,7 +2,7 @@
 A program that simulates the behavior of a possible actor implemented in Rust.\
 For the full verification strategy, tool-selection rationale, and comparative analysis, see the [Verification Report](REPORT.md).\
 The actor is implemented as a small finite state machine (FSM); its behavior depends heavily on the state in order to avoid dangerous actions.\
-It is also possible to simulate an example of how different amounts of actors will act on a given number of shared resources.\
+It can also simulate multiple actors competing for a shared resource pool.\
 All the configuration parameters are set by the arguments of the program. In particular:
 - The first argument is the number of actors                                                            (default: 1)
 - The second is the number of retries to access the shared resource an actor performs before failing    (default: 5)
@@ -36,6 +36,20 @@ cargo creusot
 ```
 ## Main
 The `main` function has two modes. If there are arguments when the program is launched it just takes the arguments used to launch the program, initializes the config and then calls the [`run`](#run) function. If there are no arguments it instead calls the [`direct_simulation`](#direct_simulation) function.
+## ResourcePool
+A struct that I use to memorize the state of the shared resource, locked inside a Mutex. It consists of two fields, `current_pool` and `max_capacity` both `u32`, the former keeps the current amount of free resources, the latter contains the maximum amount of resources instantiated and should never be changed. The fields are private; the only way to change `current_pool` is through `reserve` and `free`, both of which enforce the capacity invariant.
+### ResourcePool::new()
+It's the constructor method for the `ResourcePool` struct. It takes an `u32` as input and returns a struct that initially contains the same value received in both fields.
+### reserve
+This method allows to modify the `current_pool` field of the struct. First it checks if there are still resources available, if there are it decreases the number, if there are no resources left this method panics. To avoid the panic it is advised to call this method only after a check has been performed using the [`can_reserve`](#can_reserve) method.
+### free
+This is the other method that allows to modify the `current_pool` field. It checks if the available resources are strictly less than the maximum capacity, if it is it increments the amount of free resources by one, if it is not it panics to avoid a double free.
+### can_reserve
+It's a small helper function that returns whether there are still available resources as a boolean value.
+### current
+Getter method to get the `current_pool` value in the corresponding field.
+### max
+Getter method to get the `max_capacity` value in the corresponding field.
 ## Config
 <a name="new"></a>
 The `Config` struct, in the lib file, has five fields, one for each possible argument. The `new` function takes all five arguments and returns the correct `Config`.
@@ -106,8 +120,8 @@ It works in a similar way to the [`reserve_resource`](#reserve_resource) method.
 ### run_one
 Simulates a possible complete execution of an `Actor`.\
 At first the `Actor` checks its integrity, then it tries to reserve a resource.\
-If it can, it simulates the act by sleeping for the [`Config`](#config)'s duration (in the mean time other `Actor`s can perform whichever action they can since the simulation is asynchronous). After this time the `Actor` is stopped, the resource is freed and the duration for which the `Actor` has worked is printed; `Ok` is returned.\
-If the resource is busy, the process waits for the duration specified in the [`Config`](#config) struct and retries as many times as specified in the [`Config`s](#config). If it still could not act then a special error is raised.
+If it can, it simulates the act by sleeping for the [`Config`](#config)'s duration (in the meantime other `Actor`s can perform whichever action they can since the simulation is asynchronous). After this time the `Actor` is stopped, the resource is freed and the duration for which the `Actor` has worked is printed; `Ok` is returned.\
+If the resource is busy, the process waits for the duration specified in the [`Config`](#config) struct and retries as many times as specified in the [`Config`](#config) struct. If it still could not act then a special error is raised.
 
 ## Tests
 All the tests I made for the functions and to verify that everything works as it should.
@@ -118,6 +132,7 @@ They check that the [`Config`](#config) methods, the [`Actor`](#actor) state tra
 - The first test checks if the [`new`](#new) method returns what I expect;
 - The second test checks if the same thing applies for the [`parse`](#parse) method;
 - The third and fourth tests check if the [`parse`](#parse) method panics when it should;
+- Some tests also verify that the methods of [`ResourcePool`](#resourcepool) behave as expected in known conditions;
 - There is a test also for every possible state transition so that they all work as expected;
 - The last tests check if the resource freeing and locking works correctly and panics when they should.
 
@@ -127,11 +142,12 @@ These tests result in:\
 ### Kani
 [[Kani](https://github.com/model-checking/kani) 0.67.0]\
 Kani helps test different values to verify that no unsafe condition can be met focusing, for example, on overflow or array bounds.\
-In my case I did four different tests, two on the [`parse`](#parse) method of the [`Config`](#config) struct, the others on the [`reserve_resource`](#reserve_resource) and [`free_resource`](#free_resource) functions:
+In my case I did five different tests, two on the [`parse`](#parse) method of the [`Config`](#config) struct, the others on the [`reserve_resource`](#reserve_resource) and [`free_resource`](#free_resource) functions:
 - The first test verifies that any `String` value that can be parsed as an unsigned number causes no panic and gets correctly parsed by the method;
 - The second test verifies that any `String` value that ***cannot*** be parsed as an unsigned number causes a panic;
-- The third test checks if for any capacity a free after a reserve correclty frees the resource;
-- The fourth test checks if the function correctly panics if a double_free is executed.
+- The third test performs an arbitrary bounded sequence of [`reserve`](#reserve)/[`free`](#free) operations on a symbolic pool and asserts the invariant (`current` <= `max`) holds at every step;
+- The fourth test checks if for any capacity a free after a reserve correctly frees the resource;
+- The fifth test checks if the function correctly panics if a double free is executed.
 
 These tests result in:\
 \
@@ -139,8 +155,7 @@ These tests result in:\
 ### Creusot
 [[Creusot](https://creusot.rs/) 0.14.0-dev]\
 Creusot is a tool that verifies Rust functions against formal contracts (pre- and post-conditions), proving they hold for all inputs.\
-In this project I used Creusot to verify the [`new`](#new) method of the [`Config`](#config) struct so that all the outputs correspond exactly to what is expected.\
-I cannot check the [`parse`](#parse) method since Creusot does not support std::parse() correctly so it is just marked as `#[trusted]`.
-This verification passes:\
+In this project I used Creusot to verify the [`new`](#new) method of the [`Config`](#config) struct (the postcondition holds for all `u32` inputs) and the [`reserve`](#reserve)/[`free`](#free) methods of [`ResourcePool`](#resourcepool) (each preserves the invariant `current_pool` <= `max_capacity`).
+I cannot check the [`parse`](#parse) method since Creusot does not model `std::str::parse`, so it is marked as `#[trusted]`.\
 \
 ![Image of the creusot tests that are passed](test_results/CargoCreusotResults.png)
